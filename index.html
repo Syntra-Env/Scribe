@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Syntra Transcriber</title>
+    <style>
+        :root {
+            --accent: #0066ff;
+            --bg: #f8f9fa;
+            --card: #ffffff;
+            --text-main: #1a1c1e;
+            --text-sub: #5f6368;
+            --border: #e0e2e6;
+            --red: #ff3b30;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .canvas {
+            background: var(--card);
+            width: 100%;
+            max-width: 800px;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            border-radius: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.04);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .header {
+            padding: 2rem 2.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin: 0;
+        }
+
+        .status-pill {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 100px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+        }
+
+        .offline { background: #fee2e2; color: #991b1b; }
+        .online { background: #dcfce7; color: #166534; }
+
+        .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .offline .dot { background: #ef4444; }
+        .online .dot { background: #22c55e; animation: pulse 2s infinite; }
+
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+
+        .setup-overlay {
+            padding: 1.5rem 2.5rem;
+            background: #f1f3f4;
+            border-bottom: 1px solid var(--border);
+            display: block;
+        }
+
+        .setup-overlay.hidden { display: none; }
+
+        code {
+            background: #202124;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: "SF Mono", "Consolas", monospace;
+            font-size: 0.85rem;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        .btn-copy {
+            background: none;
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .editor-container {
+            flex: 1;
+            padding: 0 2.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #transcriptArea {
+            flex: 1;
+            width: 100%;
+            border: none;
+            resize: none;
+            font-size: 1.25rem;
+            line-height: 1.6;
+            color: var(--text-main);
+            outline: none;
+            padding: 1rem 0;
+            font-family: inherit;
+        }
+
+        #transcriptArea::placeholder { color: #bdc1c6; }
+
+        .toolbar {
+            padding: 1.5rem 2.5rem 2.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .controls-main {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .btn-record {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: none;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(0,102,255,0.2);
+        }
+
+        .btn-record:hover { transform: scale(1.05); }
+        .btn-record:active { transform: scale(0.95); }
+        .btn-record svg { width: 24px; height: 24px; fill: currentColor; }
+
+        .btn-record.recording {
+            background: var(--red);
+            animation: recording-pulse 1.5s infinite;
+        }
+
+        @keyframes recording-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.4); }
+            70% { box-shadow: 0 0 0 15px rgba(255, 59, 48, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
+        }
+
+        .message {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-sub);
+        }
+
+        .actions-secondary {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-sec {
+            background: none;
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--text-main);
+            transition: background 0.2s;
+        }
+
+        .btn-sec:hover { background: #f1f3f4; }
+        .btn-sec:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .youtube-bar {
+            padding: 0.75rem 2.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .youtube-bar input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .youtube-bar input:focus { border-color: var(--accent); }
+
+        .btn-yt {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.2s;
+        }
+
+        .btn-yt:hover { opacity: 0.9; }
+        .btn-yt:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-record:disabled {
+            background: #c4c7cc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .btn-record:disabled:hover { transform: none; }
+
+        .status-bar {
+            padding: 0 2.5rem;
+            display: none;
+        }
+
+        .status-bar.active { display: block; }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .status-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-sub);
+        }
+
+        .status-pct {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 6px;
+            background: #e8eaed;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.indeterminate {
+            width: 30%;
+            animation: indeterminate 1.5s infinite ease-in-out;
+        }
+
+        @keyframes indeterminate {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="canvas">
+    <div class="header">
+        <h1>Syntra Transcriber</h1>
+        <div id="serverStatus" class="status-pill offline">
+            <div class="dot"></div>
+            <span>Bridge Offline</span>
+        </div>
+    </div>
+
+    <div id="setupOverlay" class="setup-overlay">
+        <code id="cmdCode">python server.py</code>
+        <button class="btn-copy" onclick="copyCommand()">Copy Command</button>
+    </div>
+
+    <div class="youtube-bar">
+        <input type="text" id="ytUrl" placeholder="Paste a YouTube link to transcribe...">
+        <button id="ytBtn" class="btn-yt">Transcribe</button>
+    </div>
+
+    <div id="statusBar" class="status-bar">
+        <div class="status-header">
+            <span id="statusLabel" class="status-label"></span>
+            <span id="statusPct" class="status-pct"></span>
+        </div>
+        <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+        </div>
+    </div>
+
+    <div class="editor-container">
+        <textarea id="transcriptArea" placeholder="Start speaking or paste a YouTube link..."></textarea>
+    </div>
+
+    <div class="toolbar">
+        <div class="controls-main">
+            <button id="recordBtn" class="btn-record" title="Start Recording">
+                <svg id="icon-mic" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+                <svg id="icon-stop" style="display:none" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+            </button>
+        </div>
+
+        <div class="actions-secondary">
+            <button id="saveBtn" class="btn-sec" disabled>Save</button>
+            <button id="clearBtn" class="btn-sec">Clear</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let mediaRecorder;
+    let audioChunks = [];
+    const recordBtn = document.getElementById('recordBtn');
+    const micIcon = document.getElementById('icon-mic');
+    const stopIcon = document.getElementById('icon-stop');
+    const saveBtn = document.getElementById('saveBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const transcriptArea = document.getElementById('transcriptArea');
+    const serverStatus = document.getElementById('serverStatus');
+    const setupOverlay = document.getElementById('setupOverlay');
+
+    // Status bar elements (unified status + progress)
+    const statusBar = document.getElementById('statusBar');
+    const statusLabel = document.getElementById('statusLabel');
+    const statusPct = document.getElementById('statusPct');
+    const progressFill = document.getElementById('progressFill');
+
+    function _mergeLabel(label, detail) {
+        if (!detail || detail === label || label.includes(detail) || detail.includes(label)) return label;
+        return label + ' \u2014 ' + detail;
+    }
+
+    function showStatus(label, detail, percent) {
+        statusBar.classList.add('active');
+        statusLabel.innerText = _mergeLabel(label, detail);
+        if (percent === null) {
+            progressFill.className = 'progress-fill indeterminate';
+            statusPct.innerText = '';
+        } else {
+            progressFill.className = 'progress-fill';
+            progressFill.style.width = percent + '%';
+            statusPct.innerText = Math.round(percent) + '%';
+        }
+    }
+
+    function hideStatus() {
+        statusBar.classList.remove('active');
+        progressFill.className = 'progress-fill';
+        progressFill.style.width = '0%';
+        statusPct.innerText = '';
+        statusLabel.innerText = '';
+    }
+
+    function showStatusMessage(label, detail) {
+        statusBar.classList.add('active');
+        statusLabel.innerText = _mergeLabel(label, detail);
+        progressFill.className = 'progress-fill';
+        progressFill.style.width = '0%';
+        statusPct.innerText = '';
+    }
+
+    async function checkServer() {
+        try {
+            const res = await fetch('/', { method: 'HEAD' });
+            serverStatus.className = "status-pill online";
+            serverStatus.querySelector('span').innerText = "Bridge Online";
+            setupOverlay.classList.add('hidden');
+            recordBtn.disabled = false;
+        } catch (err) {
+            serverStatus.className = "status-pill offline";
+            serverStatus.querySelector('span').innerText = "Bridge Offline";
+            setupOverlay.classList.remove('hidden');
+            recordBtn.disabled = true;
+        }
+    }
+    let healthCheckId = setInterval(checkServer, 3000);
+    checkServer();
+
+    function pauseHealthCheck() { clearInterval(healthCheckId); }
+    function resumeHealthCheck() { healthCheckId = setInterval(checkServer, 3000); }
+
+    function copyCommand() {
+        navigator.clipboard.writeText(document.getElementById('cmdCode').innerText);
+        showStatusMessage('Command copied to clipboard');
+    }
+
+    recordBtn.addEventListener('click', () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            stopRecording();
+        } else {
+            startRecording();
+        }
+    });
+
+    async function startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                sendToLocalWhisper(audioBlob);
+            };
+            mediaRecorder.start();
+
+            recordBtn.classList.add('recording');
+            micIcon.style.display = 'none';
+            stopIcon.style.display = 'block';
+            showStatusMessage('Listening...');
+            saveBtn.disabled = true;
+        } catch (err) {
+            alert("Mic access denied");
+        }
+    }
+
+    function stopRecording() {
+        mediaRecorder.stop();
+        recordBtn.classList.remove('recording');
+        micIcon.style.display = 'block';
+        stopIcon.style.display = 'none';
+        showStatus('Processing audio...', null, null);
+    }
+
+    let activeAbort = null;
+
+    clearBtn.addEventListener('click', () => {
+        transcriptArea.value = "";
+        saveBtn.disabled = true;
+        if (activeAbort) {
+            activeAbort.abort();
+            activeAbort = null;
+            ytBtn.disabled = false;
+            recordBtn.disabled = false;
+            resumeHealthCheck();
+            showStatusMessage('Transcription cancelled', 'Nothing saved');
+        } else {
+            hideStatus();
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const text = transcriptArea.value;
+        if (!text) return;
+        try {
+            await fetch('/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text })
+            });
+            showStatusMessage('Draft saved to disk');
+        } catch (err) {
+            showStatusMessage('Save failed');
+        }
+    });
+
+    const ytUrl = document.getElementById('ytUrl');
+    const ytBtn = document.getElementById('ytBtn');
+
+    ytBtn.addEventListener('click', async () => {
+        const url = ytUrl.value.trim();
+        if (!url) return;
+        ytBtn.disabled = true;
+        recordBtn.disabled = true;
+        pauseHealthCheck();
+        showStatus('Connecting...', null, null);
+
+        const abort = new AbortController();
+        activeAbort = abort;
+
+        let needsSep = !!transcriptArea.value;
+        let segmentCount = 0;
+
+        try {
+            const response = await fetch('/transcribe-youtube', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url }),
+                signal: abort.signal,
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => null);
+                showStatusMessage('Error', errData?.error || `Server returned ${response.status}`);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop();
+
+                for (const part of parts) {
+                    let eventType = 'message';
+                    let eventData = '';
+                    for (const line of part.split('\n')) {
+                        if (line.startsWith('event: ')) eventType = line.slice(7);
+                        else if (line.startsWith('data: ')) eventData = line.slice(6);
+                    }
+                    if (!eventData) continue;
+
+                    const data = JSON.parse(eventData);
+
+                    if (eventType === 'progress') {
+                        if (data.phase === 'download') {
+                            const pct = data.percent != null ? data.percent : null;
+                            const label = data.message && data.message.includes('Extracting') ? 'Extracting audio...' : 'Downloading audio...';
+                            showStatus(label, null, pct);
+                        } else if (data.phase === 'transcribe') {
+                            showStatus('Transcribing...', data.message || '', null);
+                        } else if (data.phase === 'save') {
+                            showStatus('Saving transcript...', null, 100);
+                        }
+                    } else if (eventType === 'segment') {
+                        showStatus('Transcribing...', `${data.start}s \u2013 ${data.end}s`, data.percent);
+                        if (needsSep) {
+                            transcriptArea.value += '\n\n';
+                            needsSep = false;
+                        }
+                        transcriptArea.value += (segmentCount > 0 ? ' ' : '') + data.text;
+                        segmentCount++;
+                    } else if (eventType === 'done') {
+                        showStatusMessage('Done', 'Saved to ' + data.file);
+                        saveBtn.disabled = false;
+                    } else if (eventType === 'error') {
+                        showStatusMessage('Error', data.message);
+                    }
+                }
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.error('YouTube transcription error:', err);
+            showStatusMessage('Connection error', err.message || 'unknown');
+        } finally {
+            activeAbort = null;
+            ytBtn.disabled = false;
+            recordBtn.disabled = false;
+            resumeHealthCheck();
+        }
+    });
+
+    ytUrl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') ytBtn.click();
+    });
+
+    async function sendToLocalWhisper(blob) {
+        const formData = new FormData();
+        formData.append('file', blob, 'recording.webm');
+        try {
+            const response = await fetch('/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json();
+            transcriptArea.value += (transcriptArea.value ? "\n\n" : "") + result.text;
+            showStatusMessage('Transcribed and auto-saved');
+            saveBtn.disabled = false;
+        } catch (err) {
+            showStatusMessage('Connection lost during processing');
+        }
+    }
+</script>
+
+</body>
+</html>
