@@ -410,6 +410,120 @@
             border: none;
         }
 
+        /* ── Annotation system ── */
+        #transcriptArea[contenteditable] {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-y: auto;
+            min-height: 100px;
+            cursor: text;
+        }
+
+        #transcriptArea:empty::before {
+            content: attr(data-placeholder);
+            color: #bdc1c6;
+            pointer-events: none;
+        }
+
+        mark.ann {
+            border-radius: 3px;
+            padding: 0 2px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        mark.ann-important { background: #fef08a; color: #713f12; }
+        mark.ann-question  { background: #bfdbfe; color: #1e3a5f; }
+        mark.ann-key-term  { background: #bbf7d0; color: #14532d; }
+        mark.ann-follow-up { background: #fed7aa; color: #7c2d12; }
+        mark.ann-note      { background: #f5d0fe; color: #581c87; }
+
+        .ann-popover {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 6px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            gap: 4px;
+        }
+
+        .ann-popover.active { display: flex; }
+
+        .ann-color {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: transform 0.1s, border-color 0.15s;
+            position: relative;
+        }
+
+        .ann-color:hover { transform: scale(1.15); border-color: var(--text-sub); }
+        .ann-color[data-label="important"]  { background: #fef08a; }
+        .ann-color[data-label="question"]   { background: #bfdbfe; }
+        .ann-color[data-label="key-term"]   { background: #bbf7d0; }
+        .ann-color[data-label="follow-up"]  { background: #fed7aa; }
+        .ann-color[data-label="note"]       { background: #f5d0fe; }
+
+        .ann-color::after {
+            content: attr(data-label);
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-sub);
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s;
+        }
+
+        .ann-color:hover::after { opacity: 1; }
+
+        .ann-remove {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 1px solid #fca5a5;
+            background: #fef2f2;
+            color: #dc2626;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s;
+        }
+
+        .ann-remove:hover { transform: scale(1.15); }
+
+        .ann-comment-input {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-family: inherit;
+            width: 120px;
+            outline: none;
+        }
+
+        .ann-comment-input:focus { border-color: var(--accent); }
+
+        mark.ann[data-comment]::after {
+            content: '*';
+            font-size: 10px;
+            vertical-align: super;
+            color: inherit;
+            opacity: 0.6;
+        }
+
     </style>
 </head>
 <body>
@@ -453,7 +567,17 @@
     </div>
 
     <div class="editor-container">
-        <textarea id="transcriptArea" placeholder="Start speaking or paste a YouTube link..."></textarea>
+        <div id="transcriptArea" contenteditable="true" data-placeholder="Start speaking or paste a YouTube link..." spellcheck="false"></div>
+    </div>
+
+    <!-- Annotation popover (appears on text selection) -->
+    <div id="annPopover" class="ann-popover">
+        <button class="ann-color" data-label="important" title="Important"></button>
+        <button class="ann-color" data-label="question" title="Question"></button>
+        <button class="ann-color" data-label="key-term" title="Key Term"></button>
+        <button class="ann-color" data-label="follow-up" title="Follow-up"></button>
+        <button class="ann-color" data-label="note" title="Note"></button>
+        <input class="ann-comment-input" id="annComment" placeholder="comment..." title="Optional comment">
     </div>
 
     <div class="toolbar">
@@ -513,15 +637,29 @@
     let currentJobId = null;
     let defaultSaveDir = '';
 
+    // ── Helper: get/set text for contenteditable ──
+    function getPlainText() {
+        return transcriptArea.textContent || '';
+    }
+
+    function setPlainText(text) {
+        transcriptArea.textContent = text;
+    }
+
+    function appendText(text) {
+        transcriptArea.appendChild(document.createTextNode(text));
+    }
+
     // ── localStorage draft persistence ──
     const DRAFT_KEY = 'scribe_draft';
     const JOB_KEY = 'scribe_job_id';
 
     function saveDraft() {
-        const text = transcriptArea.value;
-        if (text) {
+        const html = transcriptArea.innerHTML;
+        if (html) {
             localStorage.setItem(DRAFT_KEY, JSON.stringify({
-                text: text,
+                text: getPlainText(),
+                html: html,
                 jobId: currentJobId,
                 timestamp: Date.now(),
             }));
@@ -545,7 +683,7 @@
 
     function dismissRestore() {
         document.getElementById('restoreBanner').classList.remove('active');
-        transcriptArea.value = '';
+        transcriptArea.innerHTML = '';
         clearDraft();
         saveBtn.disabled = true;
     }
@@ -556,8 +694,8 @@
         if (!raw) return;
         try {
             const draft = JSON.parse(raw);
-            if (draft.text) {
-                transcriptArea.value = draft.text;
+            if (draft.html || draft.text) {
+                transcriptArea.innerHTML = draft.html || draft.text;
                 document.getElementById('restoreBanner').classList.add('active');
                 // If there was an active job, try to recover remaining segments
                 if (draft.jobId) {
@@ -579,14 +717,14 @@
             const job = await res.json();
 
             if (job.status === 'done' && job.full_text) {
-                transcriptArea.value = job.full_text;
+                setPlainText(job.full_text);
                 saveDraft();
                 showStatusMessage('Recovered', 'Transcription completed while you were away');
                 saveBtn.disabled = false;
             } else if (job.status === 'running') {
                 // Job still running — reconstruct text from segments so far
                 const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
-                if (text) transcriptArea.value = text;
+                if (text) setPlainText(text);
                 saveDraft();
                 showStatusMessage('Reconnected', 'Transcription still in progress...');
                 // Poll until done
@@ -607,12 +745,12 @@
                 const job = await res.json();
 
                 const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
-                if (text) transcriptArea.value = text;
+                if (text) setPlainText(text);
                 saveDraft();
 
                 if (job.status === 'done') {
                     clearInterval(poll);
-                    transcriptArea.value = job.full_text;
+                    setPlainText(job.full_text);
                     saveDraft();
                     showStatusMessage('Done', 'Transcription complete');
                     saveBtn.disabled = false;
@@ -651,7 +789,10 @@
     }
 
     async function confirmSave() {
-        const text = transcriptArea.value;
+        // Export annotated text (with [[LABEL: text]] markers) if annotations exist,
+        // otherwise plain text
+        const hasAnnotations = transcriptArea.querySelector('mark.ann');
+        const text = hasAnnotations ? getAnnotatedText() : getPlainText();
         if (!text) return;
 
         const filename = saveFilenameInput.value.trim();
@@ -799,7 +940,7 @@
 
     // ── Clear ──
     clearBtn.addEventListener('click', () => {
-        transcriptArea.value = "";
+        transcriptArea.innerHTML = "";
         saveBtn.disabled = true;
         clearDraft();
         if (activeAbort) {
@@ -816,7 +957,7 @@
 
     // ── Save button → opens dialog ──
     saveBtn.addEventListener('click', () => {
-        const text = transcriptArea.value;
+        const text = getPlainText();
         if (!text) return;
         openSaveModal();
     });
@@ -836,7 +977,7 @@
         const abort = new AbortController();
         activeAbort = abort;
 
-        let needsSep = !!transcriptArea.value;
+        let needsSep = !!getPlainText();
         let segmentCount = 0;
 
         try {
@@ -893,10 +1034,10 @@
                     } else if (eventType === 'segment') {
                         showStatus('Transcribing...', `${data.start}s \u2013 ${data.end}s`, data.percent);
                         if (needsSep) {
-                            transcriptArea.value += '\n\n';
+                            appendText('\n\n');
                             needsSep = false;
                         }
-                        transcriptArea.value += (segmentCount > 0 ? ' ' : '') + data.text;
+                        appendText((segmentCount > 0 ? ' ' : '') + data.text);
                         segmentCount++;
                         // Persist draft after every segment
                         saveDraft();
@@ -941,7 +1082,7 @@
                 body: formData
             });
             const result = await response.json();
-            transcriptArea.value += (transcriptArea.value ? "\n\n" : "") + result.text;
+            appendText((getPlainText() ? "\n\n" : "") + result.text);
             showStatusMessage('Transcribed');
             saveBtn.disabled = false;
             saveDraft();
@@ -949,6 +1090,184 @@
             showStatusMessage('Connection lost during processing');
         }
     }
+
+    // ── Annotation system (Issue #3) ──
+    const annPopover = document.getElementById('annPopover');
+    const annComment = document.getElementById('annComment');
+    const LABELS = ['important', 'question', 'key-term', 'follow-up', 'note'];
+
+    // Show popover when user selects text inside transcriptArea
+    document.addEventListener('mouseup', (e) => {
+        // Small delay so selection is finalized
+        setTimeout(() => positionPopover(e), 10);
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.shiftKey) setTimeout(() => positionPopover(e), 10);
+    });
+
+    function positionPopover(e) {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+            annPopover.classList.remove('active');
+            return;
+        }
+
+        // Check that selection is inside our editor
+        const range = sel.getRangeAt(0);
+        if (!transcriptArea.contains(range.commonAncestorContainer)) {
+            annPopover.classList.remove('active');
+            return;
+        }
+
+        // If the entire selection is already inside a single mark, show remove option instead
+        const existingMark = getParentMark(range.commonAncestorContainer);
+
+        const rect = range.getBoundingClientRect();
+        annPopover.style.left = Math.min(rect.left, window.innerWidth - 260) + 'px';
+        annPopover.style.top = (rect.top - 44) + 'px';
+        annComment.value = '';
+        annPopover.classList.add('active');
+    }
+
+    function getParentMark(node) {
+        while (node && node !== transcriptArea) {
+            if (node.nodeName === 'MARK' && node.classList.contains('ann')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    }
+
+    // Label buttons
+    annPopover.querySelectorAll('.ann-color').forEach(btn => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // Don't lose selection
+        });
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const label = btn.dataset.label;
+            applyAnnotation(label);
+        });
+    });
+
+    function applyAnnotation(label) {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        if (!transcriptArea.contains(range.commonAncestorContainer)) return;
+
+        // Check if already inside a mark — if so, change label
+        const existing = getParentMark(range.startContainer);
+        if (existing && existing === getParentMark(range.endContainer) &&
+            range.toString().trim() === existing.textContent.trim()) {
+            // Re-label existing mark
+            existing.className = 'ann ann-' + label;
+            existing.dataset.label = label;
+            const comment = annComment.value.trim();
+            if (comment) existing.dataset.comment = comment;
+            else delete existing.dataset.comment;
+            annPopover.classList.remove('active');
+            saveDraft();
+            return;
+        }
+
+        // Wrap selection in a new mark
+        const mark = document.createElement('mark');
+        mark.className = 'ann ann-' + label;
+        mark.dataset.label = label;
+        const comment = annComment.value.trim();
+        if (comment) mark.dataset.comment = comment;
+
+        try {
+            range.surroundContents(mark);
+        } catch (e) {
+            // Selection crosses element boundaries — extract and wrap
+            const fragment = range.extractContents();
+            mark.appendChild(fragment);
+            range.insertNode(mark);
+        }
+
+        sel.removeAllRanges();
+        annPopover.classList.remove('active');
+        saveDraft();
+    }
+
+    // Click on existing annotation to select/remove it
+    transcriptArea.addEventListener('click', (e) => {
+        const mark = e.target.closest('mark.ann');
+        if (!mark) return;
+
+        // Select the mark text so user can re-label or remove
+        const range = document.createRange();
+        range.selectNodeContents(mark);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        // Show popover with comment pre-filled
+        const rect = mark.getBoundingClientRect();
+        annPopover.style.left = Math.min(rect.left, window.innerWidth - 260) + 'px';
+        annPopover.style.top = (rect.top - 44) + 'px';
+        annComment.value = mark.dataset.comment || '';
+        annPopover.classList.add('active');
+    });
+
+    // Double-click on annotation to remove it (unwrap)
+    transcriptArea.addEventListener('dblclick', (e) => {
+        const mark = e.target.closest('mark.ann');
+        if (!mark) return;
+        e.preventDefault();
+
+        // Unwrap: replace mark with its text content
+        const parent = mark.parentNode;
+        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+        parent.normalize(); // merge adjacent text nodes
+
+        annPopover.classList.remove('active');
+        saveDraft();
+    });
+
+    // Hide popover when clicking outside
+    document.addEventListener('mousedown', (e) => {
+        if (!annPopover.contains(e.target) && e.target !== transcriptArea && !transcriptArea.contains(e.target)) {
+            annPopover.classList.remove('active');
+        }
+    });
+
+    // ── Export annotated text for LLM consumption ──
+    function getAnnotatedText() {
+        // Walk the DOM and produce [[LABEL: text]] or [[LABEL (comment): text]] markers
+        let output = '';
+        function walk(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                output += node.textContent;
+            } else if (node.nodeName === 'MARK' && node.classList.contains('ann')) {
+                const label = node.dataset.label || 'highlight';
+                const comment = node.dataset.comment;
+                const tag = comment ? `${label} (${comment})` : label;
+                output += `[[${tag}: ${node.textContent}]]`;
+            } else if (node.nodeName === 'BR') {
+                output += '\n';
+            } else {
+                for (const child of node.childNodes) walk(child);
+            }
+        }
+        walk(transcriptArea);
+        return output;
+    }
+
+    // Keep annComment from stealing focus oddly — enter applies most recent label
+    annComment.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            // Apply with the first label as default
+            applyAnnotation('note');
+        }
+    });
+    annComment.addEventListener('mousedown', (e) => {
+        e.stopPropagation(); // Don't dismiss popover
+    });
 </script>
 
 </body>
