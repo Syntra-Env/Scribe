@@ -296,6 +296,120 @@
             100% { transform: translateX(400%); }
         }
 
+        /* ── Restore banner ── */
+        .restore-banner {
+            padding: 10px 2.5rem;
+            background: #eff6ff;
+            border-bottom: 1px solid #bfdbfe;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #1e40af;
+            font-weight: 500;
+        }
+
+        .restore-banner.active { display: flex; }
+
+        .restore-banner .restore-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .restore-banner button {
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid #93c5fd;
+            background: white;
+            color: #1e40af;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .restore-banner button.restore-primary {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+        }
+
+        /* ── Save dialog modal ── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
+            padding: 28px 32px;
+            width: 100%;
+            max-width: 460px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        }
+
+        .modal h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin: 0 0 20px;
+        }
+
+        .modal label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-sub);
+            margin-bottom: 6px;
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            outline: none;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        .modal input:focus { border-color: var(--accent); }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .modal-actions button {
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .modal-actions .btn-cancel {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+        }
+
+        .modal-actions .btn-save {
+            background: var(--accent);
+            color: white;
+            border: none;
+        }
+
     </style>
 </head>
 <body>
@@ -312,6 +426,15 @@
     <div id="setupOverlay" class="setup-overlay">
         <code id="cmdCode">python server.py</code>
         <button class="btn-copy" onclick="copyCommand()">Copy Command</button>
+    </div>
+
+    <!-- Restore banner (shown when a draft is recovered from localStorage) -->
+    <div id="restoreBanner" class="restore-banner">
+        <span>Previous transcript recovered.</span>
+        <div class="restore-actions">
+            <button class="restore-primary" onclick="acceptRestore()">Keep</button>
+            <button onclick="dismissRestore()">Discard</button>
+        </div>
     </div>
 
     <div class="youtube-bar">
@@ -348,6 +471,21 @@
     </div>
 </div>
 
+<!-- Save dialog modal -->
+<div id="saveModal" class="modal-overlay">
+    <div class="modal">
+        <h2>Save Transcript</h2>
+        <label for="saveFilename">Filename</label>
+        <input type="text" id="saveFilename" placeholder="transcript_20260317_120000.txt">
+        <label for="saveDirectory">Directory</label>
+        <input type="text" id="saveDirectory" placeholder="C:\Codex\Kalima\data\transcripts">
+        <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeSaveModal()">Cancel</button>
+            <button class="btn-save" onclick="confirmSave()">Save</button>
+        </div>
+    </div>
+</div>
+
 <script>
     let mediaRecorder;
     let audioChunks = [];
@@ -360,12 +498,204 @@
     const serverStatus = document.getElementById('serverStatus');
     const setupOverlay = document.getElementById('setupOverlay');
 
-    // Status bar elements (unified status + progress)
+    // Status bar elements
     const statusBar = document.getElementById('statusBar');
     const statusLabel = document.getElementById('statusLabel');
     const statusPct = document.getElementById('statusPct');
     const progressFill = document.getElementById('progressFill');
 
+    // Save modal elements
+    const saveModal = document.getElementById('saveModal');
+    const saveFilenameInput = document.getElementById('saveFilename');
+    const saveDirectoryInput = document.getElementById('saveDirectory');
+
+    // Current job tracking (for reconnection)
+    let currentJobId = null;
+    let defaultSaveDir = '';
+
+    // ── localStorage draft persistence ──
+    const DRAFT_KEY = 'scribe_draft';
+    const JOB_KEY = 'scribe_job_id';
+
+    function saveDraft() {
+        const text = transcriptArea.value;
+        if (text) {
+            localStorage.setItem(DRAFT_KEY, JSON.stringify({
+                text: text,
+                jobId: currentJobId,
+                timestamp: Date.now(),
+            }));
+        } else {
+            localStorage.removeItem(DRAFT_KEY);
+        }
+    }
+
+    function clearDraft() {
+        localStorage.removeItem(DRAFT_KEY);
+        localStorage.removeItem(JOB_KEY);
+        currentJobId = null;
+    }
+
+    // ── Restore banner ──
+    function acceptRestore() {
+        document.getElementById('restoreBanner').classList.remove('active');
+        saveBtn.disabled = false;
+        // Text is already in textarea; just keep it
+    }
+
+    function dismissRestore() {
+        document.getElementById('restoreBanner').classList.remove('active');
+        transcriptArea.value = '';
+        clearDraft();
+        saveBtn.disabled = true;
+    }
+
+    // On page load: check for saved draft
+    (function restoreFromStorage() {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return;
+        try {
+            const draft = JSON.parse(raw);
+            if (draft.text) {
+                transcriptArea.value = draft.text;
+                document.getElementById('restoreBanner').classList.add('active');
+                // If there was an active job, try to recover remaining segments
+                if (draft.jobId) {
+                    currentJobId = draft.jobId;
+                    localStorage.setItem(JOB_KEY, draft.jobId);
+                    recoverJob(draft.jobId);
+                }
+            }
+        } catch (e) {
+            // Ignore corrupt data
+        }
+    })();
+
+    // Poll server for any segments we missed while disconnected
+    async function recoverJob(jobId) {
+        try {
+            const res = await fetch('/job/' + jobId);
+            if (!res.ok) return;
+            const job = await res.json();
+
+            if (job.status === 'done' && job.full_text) {
+                transcriptArea.value = job.full_text;
+                saveDraft();
+                showStatusMessage('Recovered', 'Transcription completed while you were away');
+                saveBtn.disabled = false;
+            } else if (job.status === 'running') {
+                // Job still running — reconstruct text from segments so far
+                const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
+                if (text) transcriptArea.value = text;
+                saveDraft();
+                showStatusMessage('Reconnected', 'Transcription still in progress...');
+                // Poll until done
+                pollJob(jobId);
+            } else if (job.status === 'error') {
+                showStatusMessage('Job failed', job.error || 'Unknown error');
+            }
+        } catch (e) {
+            // Server not available yet; banner will stay, user can retry
+        }
+    }
+
+    async function pollJob(jobId) {
+        const poll = setInterval(async () => {
+            try {
+                const res = await fetch('/job/' + jobId);
+                if (!res.ok) { clearInterval(poll); return; }
+                const job = await res.json();
+
+                const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
+                if (text) transcriptArea.value = text;
+                saveDraft();
+
+                if (job.status === 'done') {
+                    clearInterval(poll);
+                    transcriptArea.value = job.full_text;
+                    saveDraft();
+                    showStatusMessage('Done', 'Transcription complete');
+                    saveBtn.disabled = false;
+                } else if (job.status === 'error') {
+                    clearInterval(poll);
+                    showStatusMessage('Error', job.error || 'Unknown error');
+                } else {
+                    const lastSeg = job.segments[job.segments.length - 1];
+                    const pct = lastSeg ? lastSeg.percent : 0;
+                    showStatus('Transcribing...', `${job.segments.length} segments`, pct);
+                }
+            } catch (e) {
+                // Connection lost again; keep polling
+            }
+        }, 3000);
+    }
+
+    // ── Save dialog (Issue #2) ──
+    function openSaveModal() {
+        const now = new Date();
+        const ts = now.getFullYear().toString() +
+            String(now.getMonth()+1).padStart(2,'0') +
+            String(now.getDate()).padStart(2,'0') + '_' +
+            String(now.getHours()).padStart(2,'0') +
+            String(now.getMinutes()).padStart(2,'0') +
+            String(now.getSeconds()).padStart(2,'0');
+        saveFilenameInput.value = 'transcript_' + ts + '.txt';
+        saveDirectoryInput.value = defaultSaveDir || '';
+        saveModal.classList.add('active');
+        saveFilenameInput.focus();
+        saveFilenameInput.select();
+    }
+
+    function closeSaveModal() {
+        saveModal.classList.remove('active');
+    }
+
+    async function confirmSave() {
+        const text = transcriptArea.value;
+        if (!text) return;
+
+        const filename = saveFilenameInput.value.trim();
+        const directory = saveDirectoryInput.value.trim();
+
+        closeSaveModal();
+        showStatus('Saving...', null, null);
+
+        try {
+            const res = await fetch('/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, filename, directory })
+            });
+            const result = await res.json();
+            if (result.status === 'success') {
+                showStatusMessage('Saved', result.path || result.file);
+                clearDraft();
+            } else {
+                showStatusMessage('Save failed', result.error || 'Unknown error');
+            }
+        } catch (err) {
+            showStatusMessage('Save failed', err.message);
+        }
+    }
+
+    // Fetch default save dir on load
+    (async function fetchSaveDir() {
+        try {
+            const res = await fetch('/save-dir');
+            const data = await res.json();
+            defaultSaveDir = data.directory || '';
+        } catch (e) { /* server not up yet */ }
+    })();
+
+    // Close modal on Escape or click outside
+    saveModal.addEventListener('click', (e) => {
+        if (e.target === saveModal) closeSaveModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && saveModal.classList.contains('active')) closeSaveModal();
+    });
+
+    // ── Status helpers (unchanged) ──
     function _mergeLabel(label, detail) {
         if (!detail || detail === label || label.includes(detail) || detail.includes(label)) return label;
         return label + ' \u2014 ' + detail;
@@ -400,6 +730,7 @@
         statusPct.innerText = '';
     }
 
+    // ── Server health check ──
     async function checkServer() {
         try {
             const res = await fetch('/', { method: 'HEAD' });
@@ -425,6 +756,7 @@
         showStatusMessage('Command copied to clipboard');
     }
 
+    // ── Recording ──
     recordBtn.addEventListener('click', () => {
         if (mediaRecorder && mediaRecorder.state === "recording") {
             stopRecording();
@@ -465,9 +797,11 @@
 
     let activeAbort = null;
 
+    // ── Clear ──
     clearBtn.addEventListener('click', () => {
         transcriptArea.value = "";
         saveBtn.disabled = true;
+        clearDraft();
         if (activeAbort) {
             activeAbort.abort();
             activeAbort = null;
@@ -480,21 +814,14 @@
         }
     });
 
-    saveBtn.addEventListener('click', async () => {
+    // ── Save button → opens dialog ──
+    saveBtn.addEventListener('click', () => {
         const text = transcriptArea.value;
         if (!text) return;
-        try {
-            await fetch('/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text })
-            });
-            showStatusMessage('Draft saved to disk');
-        } catch (err) {
-            showStatusMessage('Save failed');
-        }
+        openSaveModal();
     });
 
+    // ── YouTube transcription ──
     const ytUrl = document.getElementById('ytUrl');
     const ytBtn = document.getElementById('ytBtn');
 
@@ -549,7 +876,11 @@
 
                     const data = JSON.parse(eventData);
 
-                    if (eventType === 'progress') {
+                    if (eventType === 'job') {
+                        // Server assigned a job ID — save it for reconnection
+                        currentJobId = data.job_id;
+                        localStorage.setItem(JOB_KEY, data.job_id);
+                    } else if (eventType === 'progress') {
                         if (data.phase === 'download') {
                             const pct = data.percent != null ? data.percent : null;
                             const label = data.message && data.message.includes('Extracting') ? 'Extracting audio...' : 'Downloading audio...';
@@ -557,7 +888,7 @@
                         } else if (data.phase === 'transcribe') {
                             showStatus('Transcribing...', data.message || '', null);
                         } else if (data.phase === 'save') {
-                            showStatus('Saving transcript...', null, 100);
+                            showStatus('Transcript complete', null, 100);
                         }
                     } else if (eventType === 'segment') {
                         showStatus('Transcribing...', `${data.start}s \u2013 ${data.end}s`, data.percent);
@@ -567,9 +898,12 @@
                         }
                         transcriptArea.value += (segmentCount > 0 ? ' ' : '') + data.text;
                         segmentCount++;
+                        // Persist draft after every segment
+                        saveDraft();
                     } else if (eventType === 'done') {
-                        showStatusMessage('Done', 'Saved to ' + data.file);
+                        showStatusMessage('Done', 'Ready to save');
                         saveBtn.disabled = false;
+                        saveDraft();
                     } else if (eventType === 'error') {
                         showStatusMessage('Error', data.message);
                     }
@@ -578,7 +912,14 @@
         } catch (err) {
             if (err.name === 'AbortError') return;
             console.error('YouTube transcription error:', err);
-            showStatusMessage('Connection error', err.message || 'unknown');
+
+            // Connection dropped — try to recover via job polling
+            if (currentJobId) {
+                showStatusMessage('Connection lost', 'Recovering...');
+                pollJob(currentJobId);
+            } else {
+                showStatusMessage('Connection error', err.message || 'unknown');
+            }
         } finally {
             activeAbort = null;
             ytBtn.disabled = false;
@@ -601,8 +942,9 @@
             });
             const result = await response.json();
             transcriptArea.value += (transcriptArea.value ? "\n\n" : "") + result.text;
-            showStatusMessage('Transcribed and auto-saved');
+            showStatusMessage('Transcribed');
             saveBtn.disabled = false;
+            saveDraft();
         } catch (err) {
             showStatusMessage('Connection lost during processing');
         }
