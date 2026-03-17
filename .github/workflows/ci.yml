@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -q pytest flask
+          # Install what we can without GPU-only packages
+          pip install -q yt-dlp ffmpeg-python 2>/dev/null || true
+
+      - name: Syntax check all Python files
+        run: |
+          find . -name "*.py" -not -path "./.git/*" | while read f; do
+            python -c "import py_compile; py_compile.compile('$f', doraise=True)"
+          done
+          echo "✓ All Python files compile cleanly"
+
+      - name: Run tests
+        run: |
+          if [ -d tests ]; then
+            python -m pytest tests/ --tb=short -q
+          else
+            echo "⚠ No tests/ directory found — CI passes vacuously. Add tests to enforce quality."
+          fi
