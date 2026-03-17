@@ -552,11 +552,81 @@
     }
 
     function setPlainText(text) {
+        // NEVER wipe annotations — if marks exist, only update unmarked text
+        const marks = transcriptArea.querySelectorAll('mark.ann');
+        if (marks.length > 0) return; // preserve annotations
         transcriptArea.textContent = text;
     }
 
     function appendText(text) {
         transcriptArea.appendChild(document.createTextNode(text));
+    }
+
+    // ── Annotation persistence (offset-based, survives DOM wipes) ──
+    const ANN_KEY = 'scribe_annotations';
+
+    function saveAnnotations() {
+        const marks = transcriptArea.querySelectorAll('mark.ann');
+        if (marks.length === 0) {
+            localStorage.removeItem(ANN_KEY);
+            return;
+        }
+        // Walk the DOM to compute character offsets for each mark
+        const annotations = [];
+        let offset = 0;
+        function walk(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                offset += node.textContent.length;
+            } else if (node.nodeName === 'MARK' && node.classList.contains('ann')) {
+                const start = offset;
+                const text = node.textContent;
+                offset += text.length;
+                annotations.push({ start, end: offset, text });
+            } else if (node.nodeName === 'BR') {
+                offset += 1;
+            } else {
+                for (const child of node.childNodes) walk(child);
+            }
+        }
+        walk(transcriptArea);
+        localStorage.setItem(ANN_KEY, JSON.stringify(annotations));
+    }
+
+    function reapplyAnnotations() {
+        const raw = localStorage.getItem(ANN_KEY);
+        if (!raw) return;
+        try {
+            const annotations = JSON.parse(raw);
+            if (!annotations.length) return;
+            // Already has marks? Don't double-apply
+            if (transcriptArea.querySelector('mark.ann')) return;
+
+            const plainText = getPlainText();
+            if (!plainText) return;
+
+            // Rebuild HTML with marks inserted at stored offsets
+            // Sort annotations by start offset (ascending)
+            annotations.sort((a, b) => a.start - b.start);
+            let html = '';
+            let cursor = 0;
+            for (const ann of annotations) {
+                if (ann.start > cursor) {
+                    html += escapeHtml(plainText.slice(cursor, ann.start));
+                }
+                html += '<mark class="ann">' + escapeHtml(plainText.slice(ann.start, ann.end)) + '</mark>';
+                cursor = ann.end;
+            }
+            if (cursor < plainText.length) {
+                html += escapeHtml(plainText.slice(cursor));
+            }
+            transcriptArea.innerHTML = html;
+        } catch (e) {
+            // Corrupt annotation data, ignore
+        }
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // ── localStorage draft persistence ──
@@ -572,14 +642,17 @@
                 jobId: currentJobId,
                 timestamp: Date.now(),
             }));
+            saveAnnotations();
         } else {
             localStorage.removeItem(DRAFT_KEY);
+            localStorage.removeItem(ANN_KEY);
         }
     }
 
     function clearDraft() {
         localStorage.removeItem(DRAFT_KEY);
         localStorage.removeItem(JOB_KEY);
+        localStorage.removeItem(ANN_KEY);
         currentJobId = null;
     }
 
@@ -604,7 +677,13 @@
         try {
             const draft = JSON.parse(raw);
             if (draft.html || draft.text) {
+                _annGuardActive = false; // pause guard during restore
                 transcriptArea.innerHTML = draft.html || draft.text;
+                // If HTML restore didn't include marks, try offset-based re-apply
+                if (!transcriptArea.querySelector('mark.ann')) {
+                    reapplyAnnotations();
+                }
+                _annGuardActive = true;
                 document.getElementById('restoreBanner').classList.add('active');
                 // If there was an active job, try to recover remaining segments
                 if (draft.jobId) {
@@ -664,10 +743,12 @@
                     clearInterval(poll);
                     showStatusMessage('Error', job.error || 'Unknown error');
                 } else {
-                    // Still running — safe to update (no annotations during active transcription)
-                    const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
-                    if (text) setPlainText(text);
-                    saveDraft();
+                    // Still running — only update if no annotations present
+                    if (!transcriptArea.querySelector('mark.ann')) {
+                        const text = job.segments.map(s => s.text).filter(Boolean).join(' ');
+                        if (text) setPlainText(text);
+                        saveDraft();
+                    }
                     const lastSeg = job.segments[job.segments.length - 1];
                     const pct = lastSeg ? lastSeg.percent : 0;
                     showStatus('Transcribing...', `${job.segments.length} segments`, pct);
@@ -1057,6 +1138,25 @@
         parent.normalize();
         saveDraft();
     });
+
+    // ── Guard: watch for unexpected annotation removal ──
+    let _annGuardActive = true;
+    const _annObserver = new MutationObserver(() => {
+        if (!_annGuardActive) return;
+        // If we had annotations in localStorage but none in DOM, re-apply
+        const storedAnns = localStorage.getItem(ANN_KEY);
+        if (storedAnns && !transcriptArea.querySelector('mark.ann')) {
+            try {
+                const anns = JSON.parse(storedAnns);
+                if (anns.length > 0) {
+                    _annGuardActive = false; // prevent re-entrant
+                    reapplyAnnotations();
+                    _annGuardActive = true;
+                }
+            } catch (e) {}
+        }
+    });
+    _annObserver.observe(transcriptArea, { childList: true, subtree: true });
 
     // ── Export annotated text for LLM consumption ──
     function getAnnotatedText() {
