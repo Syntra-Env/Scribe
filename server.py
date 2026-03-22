@@ -12,8 +12,8 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Standard Scholar directory for transcripts
-SAVE_DIR = r"C:\Syntra\Scholar\data\transcripts"
+# Standard Theologian directory for transcripts
+SAVE_DIR = r"C:\Syntra\Theologian\data\transcripts"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
