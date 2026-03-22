@@ -12,8 +12,8 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Standard Kalima directory for transcripts
-SAVE_DIR = r"C:\Codex\Kalima\data\transcripts"
+# Standard Scholar directory for transcripts
+SAVE_DIR = r"C:\Syntra\Scholar\data\transcripts"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -229,6 +229,20 @@ def transcribe_youtube():
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
         'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,OPTIONS',
     })
+
+
+@app.route('/jobs', methods=['GET'])
+def list_jobs():
+    """List all jobs — lets the client discover orphaned/running jobs."""
+    summary = []
+    for jid, job in jobs.items():
+        summary.append({
+            "job_id": jid,
+            "status": job["status"],
+            "segment_count": len(job["segments"]),
+            "url": job["url"],
+        })
+    return jsonify(summary)
 
 
 @app.route('/job/<job_id>', methods=['GET'])

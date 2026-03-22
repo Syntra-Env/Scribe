@@ -819,6 +819,31 @@
         } catch (e) { /* server not up yet */ }
     })();
 
+    // Auto-discover orphaned jobs (if we don't have a jobId from localStorage)
+    (async function discoverOrphanedJobs() {
+        if (currentJobId) return; // already tracking a job
+        try {
+            const res = await fetch('/jobs');
+            if (!res.ok) return;
+            const jobList = await res.json();
+            // Find any running job
+            const running = jobList.find(j => j.status === 'running');
+            const done = jobList.find(j => j.status === 'done' && j.segment_count > 0);
+            const target = running || done;
+            if (!target) return;
+
+            currentJobId = target.job_id;
+            localStorage.setItem(JOB_KEY, target.job_id);
+            showStatusMessage('Found orphaned job', target.status + ' (' + target.segment_count + ' segments)');
+
+            if (running) {
+                pollJob(running.job_id);
+            } else if (done) {
+                recoverJob(done.job_id);
+            }
+        } catch (e) { /* server not up */ }
+    })();
+
     // Close modal on Escape or click outside
     saveModal.addEventListener('click', (e) => {
         if (e.target === saveModal) closeSaveModal();
