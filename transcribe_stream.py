@@ -1,7 +1,7 @@
 import sys
 import os
 from faster_whisper import WhisperModel
-import json
+
 import threading
 import time
 
@@ -12,21 +12,21 @@ class StreamingTranscriber:
         self.full_text = ""
         self.segments = []
         self.running = True
+        self.last_saved_text = ""
     
     def save_progress(self):
         txt_path = self.output_path + ".txt"
         while self.running:
-            time.sleep(2)
-            if self.full_text:
+            time.sleep(1)
+            if self.full_text and self.full_text != self.last_saved_text:
                 with open(txt_path, "w", encoding="utf-8") as f:
                     f.write(self.full_text)
-                print(f"[*] Auto-saved intermediate output ({len(self.full_text)} chars)", flush=True)
+                self.last_saved_text = self.full_text
+                print(f"[*] Saved ({len(self.full_text)} chars)", flush=True)
         
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(self.full_text)
-        with open(self.output_path + ".json", "w", encoding="utf-8") as f:
-            json.dump({"text": self.full_text, "segments": self.segments}, f, indent=2, ensure_ascii=False)
-        print(f"[+] Final save complete", flush=True)
+        print(f"[+] Done! Final: {txt_path}", flush=True)
     
     def transcribe(self):
         print("[*] Loading Whisper model...", flush=True)
@@ -40,8 +40,10 @@ class StreamingTranscriber:
             task="transcribe"
         )
         
-        self.full_text = info.text if hasattr(info, 'text') else ""
+        self.full_text = ""
         self.segments = []
+        total_duration = info.duration or 1
+        
         for seg in segments:
             self.segments.append({
                 "start": seg.start,
@@ -49,6 +51,10 @@ class StreamingTranscriber:
                 "text": seg.text
             })
             self.full_text += seg.text
+            progress = min(100, (seg.end / total_duration) * 100)
+            print(f"\r[*] Progress: {progress:.1f}% ({seg.end:.1f}s / {total_duration:.1f}s)", end="", flush=True)
+        
+        print(flush=True)
     
     def run(self):
         save_thread = threading.Thread(target=self.save_progress, daemon=True)
